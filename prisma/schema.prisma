@@ -1,0 +1,240 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// Auth tables (User/Session/Account/Verification) below match what Better
+// Auth's Prisma adapter expects out of the box (see src/lib/auth.ts). The
+// app-specific relations (subscription, watchProgress, myList) are added
+// directly onto User since Prisma only allows one schema file per client.
+
+// ---------- Auth (Better Auth core schema) ----------
+// Shape follows Better Auth's Prisma adapter conventions. If you add plugins
+// (magic link, 2FA, organizations, etc.) run `npx @better-auth/cli generate`
+// to append whatever extra fields/models that plugin needs — don't hand-edit
+// these four models beyond what's here without checking the CLI output first.
+
+model User {
+  id            String    @id @default(cuid())
+  name          String
+  email         String    @unique
+  emailVerified Boolean   @default(false)
+  image         String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  sessions      Session[]
+  accounts      Account[]
+  subscription  Subscription?
+  watchProgress WatchProgress[]
+  myList        MyListEntry[]
+
+  @@map("user")
+}
+
+model Session {
+  id        String   @id @default(cuid())
+  expiresAt DateTime
+  token     String   @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  ipAddress String?
+  userAgent String?
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("session")
+}
+
+model Account {
+  id                    String    @id @default(cuid())
+  accountId             String
+  providerId            String
+  userId                String
+  user                  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  accessToken           String?
+  refreshToken          String?
+  idToken               String?
+  accessTokenExpiresAt  DateTime?
+  refreshTokenExpiresAt DateTime?
+  scope                 String?
+  password              String? // only set for the email/password provider
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  @@map("account")
+}
+
+model Verification {
+  id         String   @id @default(cuid())
+  identifier String
+  value      String
+  expiresAt  DateTime
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@map("verification")
+}
+
+// ---------- Billing ----------
+
+enum SubscriptionTier {
+  FREE_AD_SUPPORTED
+  PLUS
+  PREMIUM
+}
+
+enum SubscriptionStatus {
+  ACTIVE
+  PAST_DUE
+  CANCELED
+  TRIALING
+  INCOMPLETE
+}
+
+model Subscription {
+  id                   String             @id @default(cuid())
+  userId               String             @unique
+  user                 User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tier                 SubscriptionTier   @default(FREE_AD_SUPPORTED)
+  status               SubscriptionStatus @default(ACTIVE)
+  stripeCustomerId     String?            @unique
+  stripeSubscriptionId String?            @unique
+  stripePriceId        String?
+  currentPeriodEnd     DateTime?
+  cancelAtPeriodEnd     Boolean           @default(false)
+  createdAt            DateTime           @default(now())
+  updatedAt            DateTime           @updatedAt
+}
+
+// ---------- Catalog ----------
+
+enum TitleType {
+  MOVIE
+  SERIES
+  PODCAST
+}
+
+model Title {
+  id            String    @id @default(cuid())
+  type          TitleType
+  title         String
+  slug          String    @unique
+  synopsis      String    @db.Text
+  posterUrl     String?
+  backdropUrl   String?
+  trailerAssetId String?
+  releaseYear   Int?
+  genres        String[]
+  language      String    @default("el-CY") // Greek-Cypriot default; also "en", "tr", etc.
+  ageRating     String?   // e.g. "PG", "16+"
+  cast          String[]
+  isOriginal    Boolean   @default(true) // KYMA Original badge
+  featured      Boolean   @default(false)
+  freeWithAds   Boolean   @default(false) // whole title available on ad-supported tier
+  createdAt     DateTime  @default(now())
+
+  seasons  Season[]
+  episodes Episode[] // for movies/podcast episodes not under a season
+  myList   MyListEntry[]
+
+  @@index([type])
+  @@index([featured])
+}
+
+model Season {
+  id       String @id @default(cuid())
+  titleId  String
+  title    Title  @relation(fields: [titleId], references: [id], onDelete: Cascade)
+  number   Int
+  name     String?
+
+  episodes Episode[]
+
+  @@unique([titleId, number])
+}
+
+model Episode {
+  id              String   @id @default(cuid())
+  titleId         String
+  title           Title    @relation(fields: [titleId], references: [id], onDelete: Cascade)
+  seasonId        String?
+  season          Season?  @relation(fields: [seasonId], references: [id], onDelete: Cascade)
+  number          Int      @default(1)
+  name            String
+  synopsis        String?  @db.Text
+  durationSeconds Int
+  videoAssetId    String   // Bunny Stream / Mux asset id
+  audioAssetId    String?  // for podcast-only audio version
+  thumbnailUrl    String?
+  freeWithAds     Boolean  @default(false)
+  publishedAt     DateTime @default(now())
+
+  watchProgress WatchProgress[]
+  adImpressions AdImpression[]
+
+  @@index([titleId])
+}
+
+model MyListEntry {
+  id      String @id @default(cuid())
+  userId  String
+  user    User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  titleId String
+  title   Title  @relation(fields: [titleId], references: [id], onDelete: Cascade)
+  addedAt DateTime @default(now())
+
+  @@unique([userId, titleId])
+}
+
+model WatchProgress {
+  id             String   @id @default(cuid())
+  userId         String
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  episodeId      String
+  episode        Episode  @relation(fields: [episodeId], references: [id], onDelete: Cascade)
+  positionSeconds Int     @default(0)
+  completed      Boolean  @default(false)
+  updatedAt      DateTime @updatedAt
+
+  @@unique([userId, episodeId])
+}
+
+// ---------- Ad system ----------
+// MVP approach: direct-sold creatives served via server-side ad insertion
+// (Bunny/Cloudflare Stream) at pre-roll and mid-roll break points.
+// This table tracks creatives + delivery; a programmatic exchange
+// (Google Ad Manager, etc.) can be layered in later using the same
+// AdImpression log for reporting.
+
+model AdCreative {
+  id              String   @id @default(cuid())
+  advertiserName  String
+  videoAssetId    String
+  durationSeconds Int
+  active          Boolean  @default(true)
+  weight          Int      @default(1) // relative frequency
+  startsAt        DateTime?
+  endsAt          DateTime?
+  createdAt       DateTime @default(now())
+
+  impressions AdImpression[]
+}
+
+model AdImpression {
+  id           String     @id @default(cuid())
+  adCreativeId String
+  adCreative   AdCreative @relation(fields: [adCreativeId], references: [id], onDelete: Cascade)
+  episodeId    String
+  episode      Episode    @relation(fields: [episodeId], references: [id], onDelete: Cascade)
+  userId       String?
+  servedAt     DateTime   @default(now())
+  breakPosition String    @default("pre-roll") // pre-roll | mid-roll | post-roll
+
+  @@index([adCreativeId])
+  @@index([episodeId])
+}
