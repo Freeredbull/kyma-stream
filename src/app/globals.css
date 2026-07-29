@@ -1,0 +1,60 @@
+@import "tailwindcss";
+
+/*
+ * KYMA design tokens (Tailwind v4 CSS-first config).
+ * Palette: deep sea-navy night, limestone sand, Aegean teal, sun ochre —
+ * deliberately not the generic cream/terracotta AI-default palette.
+ * Tailwind v4 turns each --color-* / --font-* var below into matching
+ * utilities automatically (bg-night, text-ochre-bright, font-display, etc).
+ */
+@theme {
+  --color-night: #0b1e2d;
+  --color-night-light: #12293d;
+  --color-night-deep: #071420;
+  --color-sand: #e8dfc8;
+  --color-sand-dim: #b8af9a;
+  --color-teal: #1f7a6c;
+  --color-teal-bright: #2e9c89;
+  --color-ochre: #d9a441;
+  --color-ochre-bright: #f0be5e;
+  --color-coral: #e85d4e;
+
+  --font-display: var(--font-fraunces), serif;
+  --font-body: var(--font-inter), sans-serif;
+  --font-mono: var(--font-plex-mono), monospace;
+}
+
+:root {
+  color-scheme: dark;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  @apply bg-night text-sand font-body antialiased;
+}
+
+/* Visible focus ring everywhere — accessibility floor, not optional */
+:focus-visible {
+  outline: 2px solid var(--color-ochre-bright);
+  outline-offset: 2px;
+}
+
+/* Horizontal shelf scroller */
+.shelf-scroll {
+  scrollbar-width: none;
+}
+.shelf-scroll::-webkit-scrollbar {
+  display: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
